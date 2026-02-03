@@ -19,6 +19,7 @@
     "test:regime": "npx ts-node src/yellow/regime-detector.ts",
     "test:gap": "npx ts-node src/yellow/gap-auction.ts",
     "test:oracle": "npx ts-node src/oracle/oracle-aggregator.ts",
+    "test:e2e": "npx ts-node src/yellow/e2e-simulation.ts",
     "dev": "npx ts-node"
   },
   "keywords": [],
