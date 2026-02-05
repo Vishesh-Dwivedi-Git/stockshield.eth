@@ -28,6 +28,18 @@ const DEFAULT_CONFIG: OracleConfig = {
     deviationThreshold: 0.01,
 };
 
+const ORACLE_TIMEOUT_MS = 5000; // 5 second timeout for oracle calls
+
+/**
+ * Wraps a promise with a timeout. Returns null if timeout is exceeded.
+ */
+async function withTimeout<T>(promise: Promise<T | null>, timeoutMs: number): Promise<T | null> {
+    return Promise.race([
+        promise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+}
+
 export class OracleAggregator {
     private config: OracleConfig;
     private pythClient: PythClient;
@@ -50,11 +62,11 @@ export class OracleAggregator {
      * Get consensus price from all sources
      */
     async getConsensusPrice(asset: string, poolId?: string): Promise<OraclePrice> {
-        // Fetch from all sources in parallel
+        // Fetch from all sources in parallel with timeout protection
         const [pythPrice, chainlinkPrice, twapPrice] = await Promise.all([
-            this.getPythPrice(asset),
-            this.getChainlinkPrice(asset),
-            this.getTWAPPrice(poolId || asset),
+            withTimeout(this.getPythPrice(asset), ORACLE_TIMEOUT_MS),
+            withTimeout(this.getChainlinkPrice(asset), ORACLE_TIMEOUT_MS),
+            Promise.resolve(this.getTWAPPrice(poolId || asset)), // TWAP is synchronous
         ]);
 
         // Collect fresh prices

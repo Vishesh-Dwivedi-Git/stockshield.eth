@@ -2,15 +2,22 @@
  * StockShield Backend - Main Service
  * 
  * Orchestrates all backend services:
+ * - API Server (REST endpoints)
+ * - WebSocket Server (real-time updates)
  * - Yellow Network client
  * - Oracle Aggregator (Pyth, Chainlink, TWAP)
  * - VPIN Calculator
  * - Regime Detector
  * - State Broadcaster
  * - Gap Auction Service
+ * 
+ * Usage:
+ *   npm run start         - Start API server (for frontend integration)
+ *   npm run start:demo    - Run demo simulation
  */
 
 import dotenv from 'dotenv';
+import http from 'http';
 import { createYellowClient } from './yellow/yellow-client';
 import { VPINCalculator } from './yellow/vpin-calculator';
 import { RegimeDetector } from './yellow/regime-detector';
@@ -20,150 +27,157 @@ import { PythClient } from './oracle/pyth-client';
 import { ChainlinkMock } from './oracle/chainlink-mock';
 import { TWAPCalculator } from './oracle/twap-calculator';
 import { OracleAggregator } from './oracle/oracle-aggregator';
+import { APIServer } from './api/api-server';
+import { WSServer } from './api/ws-server';
 
 // Load environment variables
 dotenv.config();
 
+// Configuration
+const API_PORT = parseInt(process.env.API_PORT || '3001', 10);
+const RUN_MODE = process.env.RUN_MODE || 'api'; // 'api' or 'demo'
+
 async function main() {
     console.log('🚀 Starting StockShield Backend Services\n');
+    console.log(`📋 Mode: ${RUN_MODE.toUpperCase()}`);
+    console.log(`📋 API Port: ${API_PORT}\n`);
 
     // ========================================================================
-    // 1. Initialize Yellow Network Client
+    // 1. Initialize Core Services
     // ========================================================================
-    console.log('1️⃣  Initializing Yellow Network Client...');
-    const yellowClient = createYellowClient();
-
-    try {
-        await yellowClient.connect();
-        console.log('✅ Connected to Yellow Network\n');
-    } catch (error) {
-        console.error('❌ Failed to connect to Yellow Network:', error);
-        process.exit(1);
-    }
-
-    // ========================================================================
-    // 2. Initialize Oracle Services
-    // ========================================================================
-    console.log('2️⃣  Initializing Oracle Services...');
+    console.log('1️⃣  Initializing Core Services...');
 
     const pythClient = new PythClient();
     const chainlinkMock = new ChainlinkMock({ latencyMs: 20000 });
     const twapCalc = new TWAPCalculator();
-    const oracleAggregator = new OracleAggregator(
-        pythClient,
-        chainlinkMock,
-        twapCalc
-    );
-
-    console.log('✅ Oracle Aggregator initialized\n');
-
-    // ========================================================================
-    // 3. Initialize VPIN Calculator
-    // ========================================================================
-    console.log('3️⃣  Initializing VPIN Calculator...');
+    const oracleAggregator = new OracleAggregator(pythClient, chainlinkMock, twapCalc);
     const vpinCalc = new VPINCalculator();
-    console.log('✅ VPIN Calculator initialized\n');
-
-    // ========================================================================
-    // 4. Initialize Regime Detector
-    // ========================================================================
-    console.log('4️⃣  Initializing Regime Detector...');
     const regimeDetector = new RegimeDetector();
-    const currentRegime = regimeDetector.getCurrentRegime();
-    console.log(`✅ Regime Detector initialized - Current: ${currentRegime.regime}\n`);
-
-    // ========================================================================
-    // 5. Initialize Gap Auction Service
-    // ========================================================================
-    console.log('5️⃣  Initializing Gap Auction Service...');
     const gapAuction = new GapAuctionService();
-    console.log('✅ Gap Auction Service initialized\n');
+
+    console.log('✅ Core services initialized\n');
 
     // ========================================================================
-    // 6. Create State Channel
+    // 2. Initialize Yellow Network Client (optional - can fail gracefully)
     // ========================================================================
-    console.log('6️⃣  Creating Yellow Network State Channel...');
-    let channelId: string;
+    console.log('2️⃣  Initializing Yellow Network Client...');
+    const yellowClient = createYellowClient();
+    let channelId: string | null = null;
+    let stateBroadcaster: StateBroadcaster | null = null;
 
     try {
+        await yellowClient.connect();
         channelId = await yellowClient.createChannel();
-        console.log(`✅ Channel created: ${channelId}\n`);
+        console.log(`✅ Yellow Network connected, channel: ${channelId}\n`);
+
+        stateBroadcaster = new StateBroadcaster(
+            yellowClient,
+            vpinCalc,
+            regimeDetector,
+            oracleAggregator,
+            {
+                vpinUpdateInterval: 5000,
+                regimeCheckInterval: 60000,
+                minVPINChange: 0.05,
+            }
+        );
+        await stateBroadcaster.start(channelId);
     } catch (error) {
-        console.error('❌ Failed to create channel:', error);
-        process.exit(1);
+        console.warn('⚠️  Yellow Network connection failed (continuing without it)');
+        console.warn(`   Reason: ${error instanceof Error ? error.message : error}\n`);
     }
 
     // ========================================================================
-    // 7. Initialize State Broadcaster
+    // 3. Start API Server
     // ========================================================================
-    console.log('7️⃣  Initializing State Broadcaster...');
-    const stateBroadcaster = new StateBroadcaster(
-        yellowClient,
-        vpinCalc,
-        regimeDetector,
-        oracleAggregator,
-        {
-            vpinUpdateInterval: 5000,      // 5 seconds
-            regimeCheckInterval: 60000,    // 1 minute
-            minVPINChange: 0.05,           // 5% change
-        }
-    );
+    console.log('3️⃣  Starting API Server...');
 
-    await stateBroadcaster.start(channelId);
-    console.log('✅ State Broadcaster started\n');
+    const apiServer = new APIServer(vpinCalc, regimeDetector, oracleAggregator);
+    const httpServer = http.createServer((req, res) => {
+        // @ts-ignore - access private method for now
+        apiServer['handleRequest'](req, res);
+    });
 
     // ========================================================================
-    // 8. Start Monitoring Loop
+    // 4. Start WebSocket Server
     // ========================================================================
-    console.log('8️⃣  Starting monitoring loop...\n');
-    console.log('═'.repeat(60));
-    console.log('📊 StockShield Backend is now running');
-    console.log('═'.repeat(60));
-    console.log('');
+    console.log('4️⃣  Starting WebSocket Server...');
 
-    // Simulate some trading activity for demo
-    let tradeCount = 0;
-    const demoInterval = setInterval(async () => {
-        tradeCount++;
+    const wsServer = new WSServer(vpinCalc, regimeDetector, oracleAggregator);
+    wsServer.start(httpServer);
 
-        // Simulate random trades
-        const isBuy = Math.random() > 0.5;
-        const volume = Math.random() * 10000 + 1000; // $1k - $11k
-
-        vpinCalc.processTrade(volume, isBuy);
-
-        // Get oracle price
-        try {
-            const oraclePrice = await oracleAggregator.getConsensusPrice('ETH');
-            const priceFormatted = Number(oraclePrice.price) / 1e18;
-
-            console.log(`[${new Date().toISOString()}]`);
-            console.log(`  Trade: ${isBuy ? 'BUY' : 'SELL'} $${volume.toFixed(2)}`);
-            console.log(`  Oracle: $${priceFormatted.toFixed(2)} (${(oraclePrice.confidence * 100).toFixed(1)}% confidence)`);
-            console.log(`  VPIN: ${vpinCalc.getVPIN().toFixed(3)}`);
-            console.log(`  Regime: ${regimeDetector.getCurrentRegime().regime}`);
-            console.log('');
-        } catch (error) {
-            console.error('Error fetching oracle price:', error);
-        }
-
-        // Stop after 20 trades for demo
-        if (tradeCount >= 20) {
-            console.log('\n🎉 Demo completed! Stopping services...\n');
-            clearInterval(demoInterval);
-            await cleanup();
-        }
-    }, 10000); // Every 10 seconds
+    // Start HTTP server
+    httpServer.listen(API_PORT, () => {
+        console.log(`\n${'═'.repeat(60)}`);
+        console.log(`📡 API Server: http://localhost:${API_PORT}/api`);
+        console.log(`🔌 WebSocket:  ws://localhost:${API_PORT}/ws`);
+        console.log(`${'═'.repeat(60)}\n`);
+    });
 
     // ========================================================================
-    // 9. Graceful Shutdown
+    // 5. Run Demo Mode (if enabled)
+    // ========================================================================
+    if (RUN_MODE === 'demo') {
+        console.log('📊 Running in DEMO mode - simulating trades...\n');
+
+        let tradeCount = 0;
+        const demoInterval = setInterval(async () => {
+            tradeCount++;
+
+            // Simulate random trades
+            const isBuy = Math.random() > 0.5;
+            const volume = Math.random() * 10000 + 1000;
+
+            const metrics = vpinCalc.processTrade(volume, isBuy);
+
+            // Broadcast VPIN update via WebSocket
+            wsServer.broadcastVPINUpdate('0xdemo');
+
+            try {
+                const oraclePrice = await oracleAggregator.getConsensusPrice('ETH');
+                const priceFormatted = Number(oraclePrice.price) / 1e18;
+
+                console.log(`[Trade ${tradeCount}] ${isBuy ? 'BUY' : 'SELL'} $${volume.toFixed(0)} | VPIN: ${metrics.vpin.toFixed(3)} | ETH: $${priceFormatted.toFixed(2)}`);
+            } catch (error) {
+                console.log(`[Trade ${tradeCount}] ${isBuy ? 'BUY' : 'SELL'} $${volume.toFixed(0)} | VPIN: ${metrics.vpin.toFixed(3)}`);
+            }
+
+            // Stop after 100 trades in demo mode
+            if (tradeCount >= 100) {
+                console.log('\n🎉 Demo completed!');
+                clearInterval(demoInterval);
+            }
+        }, 3000);
+    } else {
+        console.log('📡 Running in API mode - waiting for frontend connections...\n');
+        console.log('Available endpoints:');
+        console.log('  GET /api/health          - Service health check');
+        console.log('  GET /api/regime          - Current market regime');
+        console.log('  GET /api/vpin/:poolId    - VPIN score for pool');
+        console.log('  GET /api/price/:asset    - Oracle price for asset');
+        console.log('  GET /api/fees/:poolId    - Dynamic fee calculation');
+        console.log('  GET /api/pools           - List all pools');
+        console.log('  GET /api/pools/:poolId   - Pool details');
+        console.log('  GET /api/circuit-breaker - Circuit breaker status');
+        console.log('  GET /api/auctions/active - Active gap auctions');
+        console.log('');
+    }
+
+    // ========================================================================
+    // 6. Graceful Shutdown
     // ========================================================================
     async function cleanup() {
-        console.log('🧹 Cleaning up...');
+        console.log('\n🧹 Shutting down...');
 
         try {
-            await stateBroadcaster.stop();
-            console.log('✅ State broadcaster stopped');
+            wsServer.stop();
+            httpServer.close();
+            console.log('✅ API/WS servers stopped');
+
+            if (stateBroadcaster) {
+                await stateBroadcaster.stop();
+                console.log('✅ State broadcaster stopped');
+            }
 
             await yellowClient.disconnect();
             console.log('✅ Yellow Network disconnected');
@@ -176,7 +190,6 @@ async function main() {
         }
     }
 
-    // Handle shutdown signals
     process.on('SIGINT', cleanup);
     process.on('SIGTERM', cleanup);
 }

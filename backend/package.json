@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "StockShield Backend - API Server and Services",
   "main": "index.js",
   "devDependencies": {
     "@types/node": "^25.2.0",
@@ -11,8 +11,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "npx ts-node src/main.ts",
+    "test": "npm run test:prod",
+    "start": "RUN_MODE=api npx ts-node src/main.ts",
+    "start:demo": "RUN_MODE=demo npx ts-node src/main.ts",
+    "dev": "RUN_MODE=api npx ts-node src/main.ts",
     "test:yellow": "npx ts-node src/yellow/test-client.ts",
     "test:integration": "npx ts-node src/yellow/integration-test.ts",
     "test:vpin": "npx ts-node src/yellow/vpin-calculator.ts",
@@ -20,7 +22,11 @@
     "test:gap": "npx ts-node src/yellow/gap-auction.ts",
     "test:oracle": "npx ts-node src/oracle/oracle-aggregator.ts",
     "test:e2e": "npx ts-node src/yellow/e2e-simulation.ts",
-    "dev": "npx ts-node"
+    "test:prod": "npx ts-node src/tests/production-tests.ts",
+    "test:vpin-unit": "npx ts-node src/tests/vpin-unit.test.ts",
+    "test:regime-unit": "npx ts-node src/tests/regime-unit.test.ts",
+    "test:oracle-unit": "npx ts-node src/tests/oracle-unit.test.ts",
+    "test:all-units": "npm run test:vpin-unit && npm run test:regime-unit && npm run test:oracle-unit"
   },
   "keywords": [],
   "author": "",
