@@ -63,6 +63,10 @@ export class PythClient {
             }
 
             const priceFeed = priceFeeds[0];
+            if (!priceFeed) {
+                console.warn(`⚠️  Price feed data is undefined for ${asset}`);
+                return null;
+            }
             const priceData = priceFeed.getPriceUnchecked();
 
             return {
@@ -92,13 +96,18 @@ export class PythClient {
 
         try {
             const priceFeeds = await this.connection.getLatestPriceFeeds(priceIds);
+
+            if (!priceFeeds || priceFeeds.length === 0) {
+                return new Map();
+            }
+
             const prices = new Map<string, PythPrice>();
 
             for (let i = 0; i < assets.length; i++) {
                 const asset = assets[i];
                 const priceFeed = priceFeeds[i];
 
-                if (priceFeed) {
+                if (priceFeed && asset) {
                     const priceData = priceFeed.getPriceUnchecked();
                     prices.set(asset, {
                         price: BigInt(priceData.price),
